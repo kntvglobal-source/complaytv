@@ -1,0 +1,898 @@
+<!DOCTYPE html>
+<html lang="es" class="dark h-full bg-appBg">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+    <title>Complay Streaming TV</title>
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- HLS.js for m3u8 streaming -->
+    <script src="https://cdn.jsdelivr.net/npm/hls.js@latest"></script>
+    <!-- FontAwesome Icons -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    
+    <script>
+        tailwind.config = {
+            darkMode: 'class',
+            theme: {
+                extend: {
+                    colors: {
+                        appBg: '#081019',
+                        accent: '#D2FF01',
+                        cardBg: '#052027',
+                        cardHover: '#0a353f',
+                    }
+                }
+            }
+        }
+    </script>
+    
+    <style>
+        * {
+            box-sizing: border-box;
+            -webkit-tap-highlight-color: transparent;
+        }
+
+        body {
+            background-color: #081019;
+            color: #FFFFFF;
+            font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+            user-select: none;
+            -webkit-user-select: none;
+            overflow-x: hidden;
+        }
+
+        /* Custom scrollbar styling */
+        ::-webkit-scrollbar {
+            width: 5px;
+            height: 5px;
+        }
+        ::-webkit-scrollbar-track {
+            background: #081019;
+        }
+        ::-webkit-scrollbar-thumb {
+            background: #052027;
+            border-radius: 4px;
+        }
+        ::-webkit-scrollbar-thumb:hover {
+            background: #D2FF01;
+        }
+
+        /* Channel logo box styling */
+        .channel-logo-box {
+            border: 1.5px solid #D2FF01;
+            background-color: #000000;
+        }
+
+        /* Controls hide transitions */
+        .controls-overlay {
+            transition: opacity 0.3s ease-in-out, visibility 0.3s ease-in-out;
+        }
+        .controls-hidden {
+            opacity: 0 !important;
+            pointer-events: none !important;
+        }
+
+        /* Fullscreen container layout */
+        .fullscreen-container {
+            position: fixed !important;
+            top: 0 !important;
+            left: 0 !important;
+            right: 0 !important;
+            bottom: 0 !important;
+            width: 100vw !important;
+            height: 100vh !important;
+            z-index: 99999 !important;
+            background-color: #000000 !important;
+        }
+
+        /* Custom Range Input styling */
+        input[type=range] {
+            -webkit-appearance: none;
+            appearance: none;
+            background: rgba(255, 255, 255, 0.25);
+            border-radius: 999px;
+            outline: none;
+        }
+        input[type=range]::-webkit-slider-thumb {
+            -webkit-appearance: none;
+            appearance: none;
+            height: 14px;
+            width: 14px;
+            border-radius: 50%;
+            background: #D2FF01;
+            cursor: pointer;
+            box-shadow: 0 0 8px rgba(210, 255, 1, 0.6);
+        }
+        input[type=range]::-moz-range-thumb {
+            height: 14px;
+            width: 14px;
+            border: none;
+            border-radius: 50%;
+            background: #D2FF01;
+            cursor: pointer;
+            box-shadow: 0 0 8px rgba(210, 255, 1, 0.6);
+        }
+
+        .glass-panel {
+            background: rgba(5, 32, 39, 0.85);
+            backdrop-filter: blur(12px);
+            -webkit-backdrop-filter: blur(12px);
+        }
+        
+        .glass-dark {
+            background: rgba(8, 16, 25, 0.92);
+            backdrop-filter: blur(16px);
+            -webkit-backdrop-filter: blur(16px);
+        }
+    </style>
+</head>
+<body class="bg-appBg text-white min-h-screen flex flex-col max-w-md mx-auto relative antialiased border-x border-gray-900/50">
+
+    <!-- Sticky Main Top Container (Header + Locked Player) -->
+    <div class="sticky top-0 z-40 w-full bg-appBg shadow-2xl">
+        <!-- Header Bar -->
+        <header class="flex items-center justify-between px-4 py-2.5 bg-appBg border-b border-gray-800/60">
+            <div class="flex items-center space-x-2">
+                <div id="app-logo-container" class="flex items-center space-x-2 cursor-pointer" onclick="scrollToTop()">
+                  <img src="https://i.postimg.cc/XYZGj0S0/complay.png" alt="Complay Logo" style="height: 40px;">
+                </div>
+            </div>
+            
+            <div class="flex items-center space-x-3">
+                <span id="channel-badge" class="text-[10px] bg-cardBg border border-accent/40 text-accent px-2 py-0.5 rounded-full font-mono font-bold">
+                    130 CH
+                </span>
+                <button id="search-btn" class="text-white hover:text-accent transition p-1.5 rounded-lg active:scale-95" title="Buscar Canales">
+                    <i class="fa-solid fa-magnifying-glass text-lg"></i>
+                </button>
+            </div>
+        </header>
+
+        <!-- Main Video Player Container (LOCKED top position - will not scroll off screen) -->
+        <div id="player-wrapper" class="relative w-full aspect-video bg-black overflow-hidden group select-none">
+            <video id="video-player" class="w-full h-full object-contain pointer-events-auto" playsinline crossorigin="anonymous"></video>
+            
+            <!-- Loading Spinner -->
+            <div id="player-loader" class="absolute inset-0 flex flex-col items-center justify-center bg-black/60 backdrop-blur-sm transition-opacity duration-300 pointer-events-none opacity-0">
+                <i class="fa-solid fa-circle-notch fa-spin text-accent text-3xl mb-2"></i>
+                <span class="text-xs font-semibold text-white/80">Cargando canal...</span>
+            </div>
+
+            <!-- Inline Overlay Player Controls -->
+            <div id="inline-controls" class="controls-overlay absolute inset-0 bg-gradient-to-t from-black/90 via-black/20 to-black/60 flex flex-col justify-between p-3">
+                <!-- Top Inline Controls -->
+                <div class="flex justify-between items-center z-10">
+                    <div class="flex items-center space-x-2 overflow-hidden pr-2">
+                        <span id="inline-ch-num" class="bg-accent text-black font-extrabold text-[11px] px-1.5 py-0.5 rounded shrink-0">CH 234</span>
+                        <span id="inline-ch-name" class="text-xs font-bold text-white truncate max-w-[160px]">COM LIVE</span>
+                    </div>
+                    <button class="text-white hover:text-accent p-1.5 transition active:scale-90 shrink-0" onclick="toggleCast()" title="Transmitir a TV">
+                        <i class="fa-solid fa-chromecast text-lg text-accent"></i>
+                    </button>
+                </div>
+                
+                <!-- Center Big Play Button -->
+                <div class="absolute inset-0 flex items-center justify-center pointer-events-none">
+                    <button id="center-play-btn" class="pointer-events-auto bg-black/60 border border-accent/40 text-accent p-3.5 rounded-full hover:scale-110 active:scale-95 transition shadow-lg shadow-black/50">
+                        <i id="center-play-icon" class="fa-solid fa-pause text-2xl w-6 h-6 flex items-center justify-center"></i>
+                    </button>
+                </div>
+
+                <!-- Bottom Inline Controls -->
+                <div class="flex flex-col gap-1.5 z-10">
+                    <div class="flex items-center justify-between text-xs text-white">
+                        <div class="flex items-center space-x-4">
+                            <button id="fav-btn" class="flex items-center space-x-1.5 text-white hover:text-accent transition active:scale-95">
+                                <i id="fav-icon" class="fa-regular fa-heart text-accent text-sm"></i>
+                                <span class="text-[11px] font-medium">Favoritos</span>
+                            </button>
+                            <button id="volume-mute-btn" class="text-accent hover:scale-110 transition p-1">
+                                <i id="volume-icon" class="fa-solid fa-volume-high text-sm"></i>
+                            </button>
+                        </div>
+                        <button id="fullscreen-toggle-btn" class="text-accent hover:scale-110 transition p-1 active:scale-90" title="Pantalla completa">
+                            <i class="fa-solid fa-expand text-base"></i>
+                        </button>
+                    </div>
+                    <!-- Inline Progress Bar -->
+                    <div class="w-full bg-white/20 h-1 rounded-full overflow-hidden cursor-pointer" id="progress-container">
+                        <div id="progress-bar" class="bg-accent h-full w-0 transition-all duration-150"></div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Search Bar Input Drawer -->
+    <div id="search-bar-container" class="px-4 pt-3 pb-1 hidden bg-appBg/95 border-b border-gray-800 transition-all">
+        <div class="relative flex items-center">
+            <i class="fa-solid fa-magnifying-glass absolute left-3 text-accent text-sm"></i>
+            <input type="text" id="channel-search-input" placeholder="Buscar canal o número..." class="w-full pl-9 pr-8 py-2 bg-cardBg border border-accent/40 rounded-xl text-white text-xs placeholder-gray-400 focus:outline-none focus:border-accent shadow-inner">
+            <button id="clear-search-btn" class="absolute right-2.5 text-gray-400 hover:text-white text-xs hidden">
+                <i class="fa-solid fa-circle-xmark"></i>
+            </button>
+        </div>
+    </div>
+
+    <!-- Navigation Tabs (Canales / Programación) -->
+    <div class="px-4 my-3 flex gap-3">
+        <button id="tab-canales" class="flex-1 py-2.5 rounded-full font-bold text-center bg-accent text-black transition shadow-md">
+            Canales
+        </button>
+        <button id="tab-programacion" class="flex-1 py-2.5 rounded-full font-bold text-center bg-accent text-black transition shadow-md">
+            Programación
+        </button>
+    </div>
+
+    <!-- Channel Scrollable List -->
+    <main class="flex-1 px-4 pb-8">
+        <div id="channels-list" class="space-y-3">
+            <!-- Channel items will be generated dynamically here -->
+        </div>
+
+        <div id="empty-state" class="hidden flex flex-col items-center justify-center py-12 text-center">
+            <i class="fa-solid fa-tv text-4xl text-gray-600 mb-3"></i>
+            <p class="text-sm font-bold text-gray-300">No se encontraron canales</p>
+            <p class="text-xs text-gray-500 mt-1">Intenta con otro término de búsqueda</p>
+        </div>
+    </main>
+
+    <!-- FULLSCREEN / OVERLAY PLAYER -->
+    <div id="fullscreen-overlay" class="hidden fixed inset-0 z-[99999] bg-black select-none overflow-hidden controls-overlay">
+        
+        <div class="relative w-full h-full flex items-center justify-center">
+            
+            <!-- Top Bar Overlay -->
+            <div id="fs-top-bar" class="absolute top-0 left-0 right-0 z-30 flex justify-between items-center p-4 bg-gradient-to-b from-black/90 via-black/50 to-transparent pointer-events-auto">
+                <div class="flex items-center space-x-3 max-w-[60%]">
+                    <span id="fs-ch-number" class="bg-accent text-black font-extrabold text-xs px-2 py-0.5 rounded shadow">CH 234</span>
+                    <div class="flex flex-col">
+                        <span id="fs-channel-name" class="text-white font-extrabold text-base tracking-wide truncate">COM LIVE</span>
+                        <span id="fs-program-title" class="text-accent text-xs font-semibold truncate">No signal</span>
+                    </div>
+                </div>
+
+                <div class="flex items-center space-x-4">
+                    <button id="fs-drawer-toggle" class="flex items-center space-x-1.5 bg-cardBg/80 border border-accent/40 text-accent px-3 py-1.5 rounded-xl text-xs font-bold hover:bg-accent hover:text-black transition active:scale-95">
+                        <i class="fa-solid fa-list-ul"></i>
+                        <span>Canales</span>
+                    </button>
+                    <button onclick="toggleCast()" class="text-white hover:text-accent text-lg p-1.5 transition">
+                        <i class="fa-solid fa-chromecast"></i>
+                    </button>
+                    <button id="exit-fs-x" class="text-white hover:text-accent text-2xl p-1.5 transition">
+                        <i class="fa-solid fa-xmark"></i>
+                    </button>
+                </div>
+            </div>
+
+            <!-- Middle Player Center Controls -->
+            <div class="absolute inset-0 flex items-center justify-center pointer-events-none z-20">
+                <button id="fs-play-pause-btn" class="pointer-events-auto text-accent p-5 rounded-full bg-black/60 border border-accent/40 hover:scale-110 active:scale-95 transition shadow-2xl backdrop-blur-sm">
+                    <i id="fs-play-icon" class="fa-solid fa-pause text-3xl w-8 h-8 flex items-center justify-center"></i>
+                </button>
+            </div>
+
+            <!-- Fullscreen Side Controls -->
+            <div id="fs-left-controls" class="absolute left-4 top-1/2 -translate-y-1/2 z-30 flex flex-col items-center space-y-6 glass-panel p-3 rounded-2xl border border-white/10 pointer-events-auto">
+                <button id="fs-fav-btn" class="flex flex-col items-center text-accent hover:scale-110 transition active:scale-90">
+                    <i id="fs-fav-icon" class="fa-regular fa-heart text-2xl"></i>
+                    <span class="text-[9px] text-white font-bold mt-1">FAV</span>
+                </button>
+
+                <div class="h-px w-6 bg-white/20"></div>
+
+                <!-- Volume Slider Control -->
+                <div class="flex flex-col items-center space-y-3">
+                    <button id="fs-vol-btn" class="text-accent hover:scale-110 transition">
+                        <i id="fs-vol-icon" class="fa-solid fa-volume-high text-xl"></i>
+                    </button>
+                    <div class="h-24 flex items-center justify-center">
+                        <input type="range" id="fs-vol-slider" min="0" max="1" step="0.05" value="1" class="w-20 h-1.5 -rotate-90 origin-center accent-accent cursor-pointer">
+                    </div>
+                </div>
+            </div>
+
+            <!-- Bottom Progress & Exit Control -->
+            <div id="fs-bottom-bar" class="absolute bottom-0 left-0 right-0 z-30 p-4 bg-gradient-to-t from-black/90 via-black/50 to-transparent flex flex-col space-y-2 pointer-events-auto">
+                <div class="w-full flex items-center space-x-3">
+                    <span id="fs-current-time" class="text-[10px] text-gray-300 font-mono font-bold">00:00</span>
+                    <div class="flex-1 bg-white/20 h-2 rounded-full overflow-hidden cursor-pointer" id="fs-progress-container">
+                        <div id="fs-progress-bar" class="bg-accent h-full w-0 transition-all duration-150"></div>
+                    </div>
+                    <button id="fs-exit-btn" class="flex items-center space-x-1.5 text-accent hover:text-white text-xs font-bold transition px-2 py-1 rounded bg-black/40 border border-accent/30">
+                        <i class="fa-solid fa-compress"></i>
+                        <span>Salir</span>
+                    </button>
+                </div>
+            </div>
+
+            <!-- Fullscreen Side Channel Drawer -->
+            <div id="fs-channel-drawer" class="absolute right-0 top-0 bottom-0 w-80 z-40 glass-dark border-l border-accent/20 flex flex-col transform translate-x-full transition-transform duration-300 ease-out pointer-events-auto shadow-2xl">
+                <div class="p-3 border-b border-gray-800 flex justify-between items-center bg-black/40">
+                    <div class="flex items-center space-x-2">
+                        <i class="fa-solid fa-tv text-accent text-sm"></i>
+                        <span class="font-bold text-xs tracking-wider text-white">CANALES</span>
+                    </div>
+                    <button id="fs-close-drawer" class="text-gray-400 hover:text-accent text-lg p-1">
+                        <i class="fa-solid fa-xmark"></i>
+                    </button>
+                </div>
+
+                <div class="p-2 border-b border-gray-800/80">
+                    <input type="text" id="fs-search-input" placeholder="Buscar canal en pantalla completa..." class="w-full px-3 py-1.5 bg-black/60 border border-gray-700/60 rounded-lg text-xs text-white placeholder-gray-500 focus:outline-none focus:border-accent">
+                </div>
+
+                <div id="fs-drawer-channels" class="flex-1 overflow-y-auto p-2 space-y-2">
+                    <!-- Channels rendered here in fullscreen mode -->
+                </div>
+            </div>
+
+        </div>
+    </div>
+
+    <!-- Toast Notification -->
+    <div id="toast" class="fixed bottom-5 left-1/2 -translate-x-1/2 bg-cardBg border border-accent text-accent text-xs font-bold px-4 py-2 rounded-full shadow-lg opacity-0 pointer-events-none transition-opacity duration-300 z-50">
+        Mensaje de notificación
+    </div>
+
+    <script>
+        // Exact 130 Channels Array Data Structure
+        const channelsData = [
+            // First 30 Channels
+            { id: 1, number: "234", name: "COM HITS", logo: "https://i.postimg.cc/Ss2CDgbj/comhits.png", streamUrl: "https://cdn.bittchannel.com:443/play/pdzswTA69ckEfnhjzyNBGh4mbznsYcFqBkTEotv6YK8/m3u8", programTitle: "No signal", programSub: "Sin programación" },
+            { id: 2, number: "20", name: "COM LIVE", logo: "https://i.postimg.cc/pLWjgWtP/comlive.png", streamUrl: "https://cdn.bittchannel.com:443/play/pdzswTA69ckEfnhjzyNBGk_A2iLr1UfuBLdhJsoHwNw/m3u8", programTitle: "No signal", programSub: "Sin programación" },
+            { id: 3, number: "150", name: "COM CLUB", logo: "https://i.postimg.cc/L5FYvRTs/comclub.png", streamUrl: "https://cdn.bittchannel.com:443/play/pdzswTA69ckEfnhjzyNBGtpDSDYkmXpHubbXPRjXRpo/m3u8", programTitle: "No signal", programSub: "Sin programación" },
+            { id: 4, number: "8", name: "BITT CHANNEL", logo: "https://i.postimg.cc/rwwdffSm/bitt.png", streamUrl: "https://cdn.bittchannel.com:443/play/pdzswTA69ckEfnhjzyNBGnseboHMGw_Msrumm2ERm8k/m3u8", programTitle: "No signal", programSub: "Sin programación" },
+            { id: 5, number: "12", name: "B MUSIC", logo: "https://i.postimg.cc/3wPdJ7zj/bmusic.png", streamUrl: "https://cdn.bittchannel.com:443/play/pdzswTA69ckEfnhjzyNBGjSlRwttTuzkrdFOZ13_oYg/m3u8", programTitle: "No signal", programSub: "Sin programación" },
+            { id: 6, number: "10", name: "PRIDE TV", logo: "https://i.postimg.cc/kGRsRn5J/pridetvlatam.png", streamUrl: "https://stream.pridetvlatam.cl/iptv/channel/2.m3u8", programTitle: "No signal", programSub: "Sin programación" },
+            { id: 7, number: "14", name: "SUYAI TV", logo: "https://i.postimg.cc/6QzYDjP1/suyaitv.png", streamUrl: "https://cl-2.backend.energeek.cl/SuyaiTV-Neo/index.m3u8", programTitle: "No signal", programSub: "Sin programación" },
+            { id: 8, number: "25", name: "NET CHANNEL", logo: "https://i.postimg.cc/HWNPYNLC/Logo-netchannel-panregional.png", streamUrl: "https://media.streambrothers.com:19360/8158/8158.m3u8", programTitle: "No signal", programSub: "Sin programación" },
+            { id: 9, number: "30", name: "PARAMOUNT NETWORK", logo: "https://i.postimg.cc/g2p9p7MX/paramountnet.png", streamUrl: "http://57.128.210.196:8080/212/index.m3u8", programTitle: "No signal", programSub: "Sin programación" },
+            { id: 10, number: "33", name: "TNT", logo: "https://i.postimg.cc/CxhvmpPS/tnt.png", streamUrl: "https://bantel-cdn1.iptvperu.tv:1936/btnscrtn/tnt/chunks.m3u8", programTitle: "No signal", programSub: "Sin programación" },
+            { id: 11, number: "40", name: "TNT SERIES", logo: "https://i.postimg.cc/8CsZgBVr/tntseries.png", streamUrl: "https://bantel-cdn1.iptvperu.tv:1936/btnscrtn/TNTseries.stream/chunks.m3u8", programTitle: "No signal", programSub: "Sin programación" },
+            { id: 12, number: "45", name: "TNT NOVELAS", logo: "https://i.postimg.cc/wMY2NCR5/tntnovelas.png", streamUrl: "http://190.61.47.54:8000/play/a02f/index.m3u8", programTitle: "No signal", programSub: "Sin programación" },
+            { id: 13, number: "50", name: "WARNER CHANNEL", logo: "https://i.postimg.cc/MGhmkCDM/warnerchannel.png", streamUrl: "http://38.134.250.110:8000/play/a029/index.m3u8", programTitle: "No signal", programSub: "Sin programación" },
+            { id: 14, number: "55", name: "DISNEY CHANNEL", logo: "https://i.postimg.cc/Vvw9vX26/disneychannel.png", streamUrl: "https://bantel-cdn1.iptvperu.tv:1936/btnscrtn/disney-channel-key/chunks.m3u8", programTitle: "No signal", programSub: "Sin programación" },
+            { id: 15, number: "60", name: "DISNEY JR", logo: "https://i.postimg.cc/qMkXdXsR/disneyjr.png", streamUrl: "http://181.78.14.26:4000/play/a073/index.m3u8", programTitle: "No signal", programSub: "Sin programación" },
+            { id: 16, number: "65", name: "STAR CHANNEL", logo: "https://i.postimg.cc/VshvbSW1/starchannel.png", streamUrl: "https://bantel-cdn1.iptvperu.tv:1936/btnscrtn/StarChannel.stream/chunks.m3u8", programTitle: "No signal", programSub: "Sin programación" },
+            { id: 17, number: "70", name: "CNN CHILE", logo: "https://i.postimg.cc/s2SZWvYS/cnn.png", streamUrl: "http://190.110.96.238:8000/play/a0f5/index.m3u8", programTitle: "No signal", programSub: "Sin programación" },
+            { id: 18, number: "75", name: "SPACE", logo: "https://i.postimg.cc/wjRtK7bP/space.png", streamUrl: "http://45.171.64.30:6060/play/a04n/index.m3u8", programTitle: "No signal", programSub: "Sin programación" },
+            { id: 19, number: "80", name: "AXN", logo: "https://i.postimg.cc/ZR7RH0t4/axn.png", streamUrl: "https://bantel-cdn1.iptvperu.tv:1936/btnscrtn/axn.stream/chunks.m3u8", programTitle: "No signal", programSub: "Sin programación" },
+            { id: 20, number: "85", name: "ENERGEEK RADIO", logo: "https://i.postimg.cc/HkTpzj16/energeekradio.png", streamUrl: "https://cl-2.backend.energeek.cl/bkp/egradioweb/video.m3u8", programTitle: "No signal", programSub: "Sin programación" },
+            { id: 21, number: "90", name: "ENERGEEK FAN", logo: "https://i.postimg.cc/y8CKdx8f/energeekfan.png", streamUrl: "https://cl-2.backend.energeek.cl/bkp/egfanweb/video.m3u8?token=W3bEnerG33k2026", programTitle: "No signal", programSub: "Sin programación" },
+            { id: 22, number: "95", name: "ENERGEEK RETRO", logo: "https://i.postimg.cc/CLLP4V6j/energeek.png", streamUrl: "https://cl-2.backend.energeek.cl/bkp/egretroweb/video.m3u8?token=W3bEnerG33k2026", programTitle: "No signal", programSub: "Sin programación" },
+            { id: 23, number: "100", name: "FX NETWORK", logo: "https://i.postimg.cc/bNhT6fCs/fxnetworks.png", streamUrl: "https://bantel-cdn1.iptvperu.tv:1936/btnscrtn/fx-key/chunks.m3u8", programTitle: "No signal", programSub: "Sin programación" },
+            { id: 24, number: "105", name: "DISCOVERY KIDS", logo: "https://i.postimg.cc/zfg7tDrc/dkids.png", streamUrl: "http://38.134.250.110:8000/play/a003/index.m3u8", programTitle: "No signal", programSub: "Sin programación" },
+            { id: 25, number: "110", name: "CARTOON NETWORK", logo: "https://i.postimg.cc/L6knVrw9/cartoon-network.png", streamUrl: "https://bantel-cdn1.iptvperu.tv:1936/btnscrtn/cartoonnetwork.stream/chunks.m3u8", programTitle: "No signal", programSub: "Sin programación" },
+            { id: 26, number: "115", name: "CARTOONITO", logo: "https://i.postimg.cc/yN7pLQB3/cartoonito.png", streamUrl: "http://45.173.12.70:8000/play/a0hh", programTitle: "No signal", programSub: "Sin programación" },
+            { id: 27, number: "120", name: "COMEDY CENTRAL", logo: "https://i.postimg.cc/3R5qg8NM/comedycentral.png", streamUrl: "https://barinaslive1.boldmss.com/COMEDY/COMEDY.isml/COMEDY.m3u8", programTitle: "No signal", programSub: "Sin programación" },
+            { id: 28, number: "125", name: "E LATAM", logo: "https://i.postimg.cc/1tVqZSr9/enow.png", streamUrl: "http://72.1.184.5:8089/play/a05d/index.m3u8", programTitle: "No signal", programSub: "Sin programación" },
+            { id: 29, number: "130", name: "FOOD NETWORK", logo: "https://i.postimg.cc/J4rzNmHc/foodnetwork.png", streamUrl: "http://168.196.127.137:6001/play/a09v/index.m3u8", programTitle: "No signal", programSub: "Sin programación" },
+            { id: 30, number: "135", name: "HBO FAMILY", logo: "https://i.postimg.cc/yN4qTXr7/hbofamily.png", streamUrl: "http://45.171.64.30:6060/play/a00k/index.m3u8", programTitle: "No signal", programSub: "Sin programación" },
+
+            // Channels 31 through 130 (Exact format matching Channel 31 spec)
+            { id: 31, number: "140", name: "HBO 2", logo: "https://i.postimg.cc/YS510j9r/hbo2.png", streamUrl: "http://45.171.64.30:6060/play/a00i/index.m3u8", programTitle: "No signal", programSub: "Sin programación" },
+            { id: 32, number: "142", name: "HBO", logo: "https://i.postimg.cc/NfjrgR43/hbo.png", streamUrl: "https://streaming.onnethn.com/HBO/playlist.m3u8", programTitle: "No signal", programSub: "Sin programación" },
+            { id: 33, number: "144", name: "LIFETIME", logo: "https://i.postimg.cc/3wqHvQ5Z/lifetime.png", streamUrl: "https://streaming.onnethn.com/LIFETIME/index.m3u8", programTitle: "No signal", programSub: "Sin programación" },
+            { id: 34, number: "146", name: "UNIVERSAL TV", logo: "https://i.postimg.cc/FRG3ZppZ/universaltv.png", streamUrl: "http://38.134.250.110:8000/play/a006/index.m3u8", programTitle: "No signal", programSub: "Sin programación" },
+            { id: 35, number: "148", name: "UNIVISION", logo: "https://i.postimg.cc/bwsPNwWM/univision.png", streamUrl: "http://138.121.15.230:9002/UNIVISION/index.m3u8", programTitle: "No signal", programSub: "Sin programación" },
+            { id: 36, number: "150", name: "SYFY", logo: "https://i.postimg.cc/4NHwfCwS/syfy.png", streamUrl: "http://23.237.104.106:8080/USA_SYFY/index.m3u8", programTitle: "No signal", programSub: "Sin programación" },
+            { id: 37, number: "152", name: "VE PLUS", logo: "https://i.postimg.cc/2jZZPYzr/veplus.png", streamUrl: "http://186.148.196.100:8000/play/a01d", programTitle: "No signal", programSub: "Sin programación" },
+            { id: 38, number: "154", name: "VISION PLUS", logo: "https://placehold.co/120x120/081019/FFFFFF?text=VISIONPLUS", streamUrl: "https://5ff3d9babae13.streamlock.net/jwagpqxehu/jwagpqxehu/playlist.m3u8?PlaylistM3UCL", programTitle: "No signal", programSub: "Sin programación" },
+            { id: 39, number: "156", name: "VLTV", logo: "https://placehold.co/120x120/081019/FFFFFF?text=VLTV", streamUrl: "https://andromeda3.trapemn.tv:1936/regionales/vltv.stream/playlist.m3u8?PlaylistM3UCL", programTitle: "No signal", programSub: "Sin programación" },
+            { id: 40, number: "158", name: "TYC SPORTS", logo: "https://placehold.co/120x120/081019/FFFFFF?text=TYC+SPORTS", streamUrl: "", programTitle: "No signal", programSub: "Sin programación" },
+            { id: 41, number: "160", name: "GOLPERU", logo: "https://placehold.co/120x120/081019/FFFFFF?text=GOLPERU", streamUrl: "", programTitle: "No signal", programSub: "Sin programación" },
+            { id: 42, number: "162", name: "WIN SPORTS", logo: "https://placehold.co/120x120/081019/FFFFFF?text=WIN+SPORTS", streamUrl: "", programTitle: "No signal", programSub: "Sin programación" },
+            { id: 43, number: "164", name: "EUROSPORT", logo: "https://placehold.co/120x120/081019/FFFFFF?text=EUROSPORT", streamUrl: "", programTitle: "No signal", programSub: "Sin programación" },
+            { id: 44, number: "166", name: "NBA TV", logo: "https://placehold.co/120x120/081019/FFFFFF?text=NBA+TV", streamUrl: "", programTitle: "No signal", programSub: "Sin programación" },
+            { id: 45, number: "168", name: "TUDN", logo: "https://placehold.co/120x120/081019/FFFFFF?text=TUDN", streamUrl: "", programTitle: "No signal", programSub: "Sin programación" },
+            { id: 46, number: "170", name: "MLB NETWORK", logo: "https://placehold.co/120x120/081019/FFFFFF?text=MLB+NET", streamUrl: "", programTitle: "No signal", programSub: "Sin programación" },
+            { id: 47, number: "172", name: "NFL NETWORK", logo: "https://placehold.co/120x120/081019/FFFFFF?text=NFL+NET", streamUrl: "", programTitle: "No signal", programSub: "Sin programación" },
+            { id: 48, number: "174", name: "RED BULL TV", logo: "https://placehold.co/120x120/081019/FFFFFF?text=RED+BULL+TV", streamUrl: "", programTitle: "No signal", programSub: "Sin programación" },
+            { id: 49, number: "176", name: "STUDIO UNIVERSAL", logo: "https://placehold.co/120x120/081019/FFFFFF?text=STUDIO+UNIV", streamUrl: "", programTitle: "No signal", programSub: "Sin programación" },
+            { id: 50, number: "178", name: "GOLDEN MOVIES", logo: "https://placehold.co/120x120/081019/FFFFFF?text=GOLDEN", streamUrl: "", programTitle: "No signal", programSub: "Sin programación" },
+            { id: 51, number: "180", name: "GOLDEN EDGE", logo: "https://placehold.co/120x120/081019/FFFFFF?text=GOLDEN+EDGE", streamUrl: "", programTitle: "No signal", programSub: "Sin programación" },
+            { id: 52, number: "182", name: "MULTIPREMIER", logo: "https://placehold.co/120x120/081019/FFFFFF?text=MULTIPREMIER", streamUrl: "", programTitle: "No signal", programSub: "Sin programación" },
+            { id: 53, number: "184", name: "I.SAT", logo: "https://placehold.co/120x120/081019/FFFFFF?text=ISAT", streamUrl: "", programTitle: "No signal", programSub: "Sin programación" },
+            { id: 54, number: "186", name: "DREAMWORKS", logo: "https://placehold.co/120x120/081019/FFFFFF?text=DREAMWORKS", streamUrl: "", programTitle: "No signal", programSub: "Sin programación" },
+            { id: 55, number: "188", name: "NICK JR", logo: "https://placehold.co/120x120/081019/FFFFFF?text=NICK+JR", streamUrl: "", programTitle: "No signal", programSub: "Sin programación" },
+            { id: 56, number: "190", name: "DISNEY JR", logo: "https://placehold.co/120x120/081019/FFFFFF?text=DISNEY+JR", streamUrl: "", programTitle: "No signal", programSub: "Sin programación" },
+            { id: 57, number: "192", name: "BABY TV", logo: "https://placehold.co/120x120/081019/FFFFFF?text=BABY+TV", streamUrl: "", programTitle: "No signal", programSub: "Sin programación" },
+            { id: 58, number: "194", name: "BOOMERANG", logo: "https://placehold.co/120x120/081019/FFFFFF?text=BOOMERANG", streamUrl: "", programTitle: "No signal", programSub: "Sin programación" },
+            { id: 59, number: "196", name: "TOONCAST", logo: "https://placehold.co/120x120/081019/FFFFFF?text=TOONCAST", streamUrl: "", programTitle: "No signal", programSub: "Sin programación" },
+            { id: 60, number: "198", name: "DISCOVERY KIDS", logo: "https://placehold.co/120x120/081019/FFFFFF?text=DISC+KIDS", streamUrl: "", programTitle: "No signal", programSub: "Sin programación" },
+            { id: 61, number: "200", name: "BITME", logo: "https://placehold.co/120x120/081019/FFFFFF?text=BITME", streamUrl: "", programTitle: "No signal", programSub: "Sin programación" },
+            { id: 62, number: "202", name: "ANIME NETWORK", logo: "https://placehold.co/120x120/081019/FFFFFF?text=ANIME+NET", streamUrl: "", programTitle: "No signal", programSub: "Sin programación" },
+            { id: 63, number: "204", name: "BBC NEWS", logo: "https://placehold.co/120x120/081019/FFFFFF?text=BBC+NEWS", streamUrl: "", programTitle: "No signal", programSub: "Sin programación" },
+            { id: 64, number: "206", name: "AL JAZEERA", logo: "https://placehold.co/120x120/081019/FFFFFF?text=AL+JAZEERA", streamUrl: "", programTitle: "No signal", programSub: "Sin programación" },
+            { id: 65, number: "208", name: "EURONEWS", logo: "https://placehold.co/120x120/081019/FFFFFF?text=EURONEWS", streamUrl: "", programTitle: "No signal", programSub: "Sin programación" },
+            { id: 66, number: "210", name: "DW ESPAÑOL", logo: "https://placehold.co/120x120/081019/FFFFFF?text=DW+ESPA%C3%91OL", streamUrl: "", programTitle: "No signal", programSub: "Sin programación" },
+            { id: 67, number: "212", name: "RT ESPAÑOL", logo: "https://placehold.co/120x120/081019/FFFFFF?text=RT+ESPA%C3%91OL", streamUrl: "", programTitle: "No signal", programSub: "Sin programación" },
+            { id: 68, number: "214", name: "FRANCE 24", logo: "https://placehold.co/120x120/081019/FFFFFF?text=FRANCE+24", streamUrl: "", programTitle: "No signal", programSub: "Sin programación" },
+            { id: 69, number: "216", name: "BLOOMBERG", logo: "https://placehold.co/120x120/081019/FFFFFF?text=BLOOMBERG", streamUrl: "", programTitle: "No signal", programSub: "Sin programación" },
+            { id: 70, number: "218", name: "FORO TV", logo: "https://placehold.co/120x120/081019/FFFFFF?text=FORO+TV", streamUrl: "", programTitle: "No signal", programSub: "Sin programación" },
+            { id: 71, number: "220", name: "TN ARGENTINA", logo: "https://placehold.co/120x120/081019/FFFFFF?text=TN+ARGENTINA", streamUrl: "", programTitle: "No signal", programSub: "Sin programación" },
+            { id: 72, number: "222", name: "C5N", logo: "https://placehold.co/120x120/081019/FFFFFF?text=C5N", streamUrl: "", programTitle: "No signal", programSub: "Sin programación" },
+            { id: 73, number: "224", name: "CARACOL TV", logo: "https://placehold.co/120x120/081019/FFFFFF?text=CARACOL+TV", streamUrl: "", programTitle: "No signal", programSub: "Sin programación" },
+            { id: 74, number: "226", name: "RCN TV", logo: "https://placehold.co/120x120/081019/FFFFFF?text=RCN+TV", streamUrl: "", programTitle: "No signal", programSub: "Sin programación" },
+            { id: 75, number: "228", name: "AZTECA UNO", logo: "https://placehold.co/120x120/081019/FFFFFF?text=AZTECA+UNO", streamUrl: "", programTitle: "No signal", programSub: "Sin programación" },
+            { id: 76, number: "230", name: "AZTECA 7", logo: "https://placehold.co/120x120/081019/FFFFFF?text=AZTECA+7", streamUrl: "", programTitle: "No signal", programSub: "Sin programación" },
+            { id: 77, number: "232", name: "LAS ESTRELLAS", logo: "https://placehold.co/120x120/081019/FFFFFF?text=LAS+ESTRELLAS", streamUrl: "", programTitle: "No signal", programSub: "Sin programación" },
+            { id: 78, number: "234", name: "CANAL 5", logo: "https://placehold.co/120x120/081019/FFFFFF?text=CANAL+5", streamUrl: "", programTitle: "No signal", programSub: "Sin programación" },
+            { id: 79, number: "236", name: "IMAGEN TV", logo: "https://placehold.co/120x120/081019/FFFFFF?text=IMAGEN+TV", streamUrl: "", programTitle: "No signal", programSub: "Sin programación" },
+            { id: 80, number: "238", name: "E! ENTERTAINMENT", logo: "https://placehold.co/120x120/081019/FFFFFF?text=E!+TV", streamUrl: "", programTitle: "No signal", programSub: "Sin programación" },
+            { id: 81, number: "240", name: "TLNOVELAS", logo: "https://placehold.co/120x120/081019/FFFFFF?text=TLNOVELAS", streamUrl: "", programTitle: "No signal", programSub: "Sin programación" },
+            { id: 82, number: "242", name: "GLITZ", logo: "https://placehold.co/120x120/081019/FFFFFF?text=GLITZ", streamUrl: "", programTitle: "No signal", programSub: "Sin programación" },
+            { id: 83, number: "244", name: "MAS CHIC", logo: "https://placehold.co/120x120/081019/FFFFFF?text=MAS+CHIC", streamUrl: "", programTitle: "No signal", programSub: "Sin programación" },
+            { id: 84, number: "246", name: "DISCOVERY H&H", logo: "https://placehold.co/120x120/081019/FFFFFF?text=DISC+H%26H", streamUrl: "", programTitle: "No signal", programSub: "Sin programación" },
+            { id: 85, number: "248", name: "FOOD NETWORK", logo: "https://placehold.co/120x120/081019/FFFFFF?text=FOOD+NET", streamUrl: "", programTitle: "No signal", programSub: "Sin programación" },
+            { id: 86, number: "250", name: "EL GOURMET", logo: "https://placehold.co/120x120/081019/FFFFFF?text=EL+GOURMET", streamUrl: "", programTitle: "No signal", programSub: "Sin programación" },
+            { id: 87, number: "252", name: "TLC", logo: "https://placehold.co/120x120/081019/FFFFFF?text=TLC", streamUrl: "", programTitle: "No signal", programSub: "Sin programación" },
+            { id: 88, number: "254", name: "HGTV", logo: "https://placehold.co/120x120/081019/FFFFFF?text=HGTV", streamUrl: "", programTitle: "No signal", programSub: "Sin programación" },
+            { id: 89, number: "256", name: "DISCOVERY SCIENCE", logo: "https://placehold.co/120x120/081019/FFFFFF?text=DISC+SCIENCE", streamUrl: "", programTitle: "No signal", programSub: "Sin programación" },
+            { id: 90, number: "258", name: "DISCOVERY TURBO", logo: "https://placehold.co/120x120/081019/FFFFFF?text=DISC+TURBO", streamUrl: "", programTitle: "No signal", programSub: "Sin programación" },
+            { id: 91, number: "260", name: "INVESTIGATION DISC", logo: "https://placehold.co/120x120/081019/FFFFFF?text=ID+DISCOVERY", streamUrl: "", programTitle: "No signal", programSub: "Sin programación" },
+            { id: 92, number: "262", name: "NAT GEO WILD", logo: "https://placehold.co/120x120/081019/FFFFFF?text=NAT+GEO+WILD", streamUrl: "", programTitle: "No signal", programSub: "Sin programación" },
+            { id: 93, number: "264", name: "FILM & ARTS", logo: "https://placehold.co/120x120/081019/FFFFFF?text=FILM+%26+ARTS", streamUrl: "", programTitle: "No signal", programSub: "Sin programación" },
+            { id: 94, number: "266", name: "SYFY", logo: "https://placehold.co/120x120/081019/FFFFFF?text=SYFY", streamUrl: "", programTitle: "No signal", programSub: "Sin programación" },
+            { id: 95, number: "268", name: "AMC TV", logo: "https://placehold.co/120x120/081019/FFFFFF?text=AMC+TV", streamUrl: "", programTitle: "No signal", programSub: "Sin programación" },
+            { id: 96, number: "270", name: "AXN MOVIES", logo: "https://placehold.co/120x120/081019/FFFFFF?text=AXN+MOVIES", streamUrl: "", programTitle: "No signal", programSub: "Sin programación" },
+            { id: 97, number: "272", name: "CINELATINO", logo: "https://placehold.co/120x120/081019/FFFFFF?text=CINELATINO", streamUrl: "", programTitle: "No signal", programSub: "Sin programación" },
+            { id: 98, number: "274", name: "GOLDEN PLUS", logo: "https://placehold.co/120x120/081019/FFFFFF?text=GOLDEN+PLUS", streamUrl: "", programTitle: "No signal", programSub: "Sin programación" },
+            { id: 99, number: "276", name: "VH1 CLASSICS", logo: "https://placehold.co/120x120/081019/FFFFFF?text=VH1+CLASSICS", streamUrl: "", programTitle: "No signal", programSub: "Sin programación" },
+            { id: 100, number: "278", name: "TELEHIT", logo: "https://placehold.co/120x120/081019/FFFFFF?text=TELEHIT", streamUrl: "", programTitle: "No signal", programSub: "Sin programación" },
+            { id: 101, number: "280", name: "RITMOSON", logo: "https://placehold.co/120x120/081019/FFFFFF?text=RITMOSON", streamUrl: "", programTitle: "No signal", programSub: "Sin programación" },
+            { id: 102, number: "282", name: "BANDAMAX", logo: "https://placehold.co/120x120/081019/FFFFFF?text=BANDAMAX", streamUrl: "", programTitle: "No signal", programSub: "Sin programación" },
+            { id: 103, number: "284", name: "MTV HITS", logo: "https://placehold.co/120x120/081019/FFFFFF?text=MTV+HITS", streamUrl: "", programTitle: "No signal", programSub: "Sin programación" },
+            { id: 104, number: "286", name: "MTV LIVE", logo: "https://placehold.co/120x120/081019/FFFFFF?text=MTV+LIVE", streamUrl: "", programTitle: "No signal", programSub: "Sin programación" },
+            { id: 105, number: "288", name: "CM TV", logo: "https://placehold.co/120x120/081019/FFFFFF?text=CM+TV", streamUrl: "", programTitle: "No signal", programSub: "Sin programación" },
+            { id: 106, number: "290", name: "EXA TV", logo: "https://placehold.co/120x120/081019/FFFFFF?text=EXA+TV", streamUrl: "", programTitle: "No signal", programSub: "Sin programación" },
+            { id: 107, number: "292", name: "HTV", logo: "https://placehold.co/120x120/081019/FFFFFF?text=HTV", streamUrl: "", programTitle: "No signal", programSub: "Sin programación" },
+            { id: 108, number: "294", name: "TRACE URBAN", logo: "https://placehold.co/120x120/081019/FFFFFF?text=TRACE+URBAN", streamUrl: "", programTitle: "No signal", programSub: "Sin programación" },
+            { id: 109, number: "296", name: "DISCOVERY WORLD", logo: "https://placehold.co/120x120/081019/FFFFFF?text=DISC+WORLD", streamUrl: "", programTitle: "No signal", programSub: "Sin programación" },
+            { id: 110, number: "298", name: "WEATHER CHANNEL", logo: "https://placehold.co/120x120/081019/FFFFFF?text=WEATHER+CH", streamUrl: "", programTitle: "No signal", programSub: "Sin programación" },
+            { id: 111, number: "300", name: "RAI ITALIA", logo: "https://placehold.co/120x120/081019/FFFFFF?text=RAI+ITALIA", streamUrl: "", programTitle: "No signal", programSub: "Sin programación" },
+            { id: 112, number: "302", name: "TVE INTERNACIONAL", logo: "https://placehold.co/120x120/081019/FFFFFF?text=TVE+INT", streamUrl: "", programTitle: "No signal", programSub: "Sin programación" },
+            { id: 113, number: "304", name: "ANTENA 3", logo: "https://placehold.co/120x120/081019/FFFFFF?text=ANTENA+3", streamUrl: "", programTitle: "No signal", programSub: "Sin programación" },
+            { id: 114, number: "306", name: "CINE NUEVO", logo: "https://placehold.co/120x120/081019/FFFFFF?text=CINE+NUEVO", streamUrl: "", programTitle: "No signal", programSub: "Sin programación" },
+            { id: 115, number: "308", name: "COMEDY MAX", logo: "https://placehold.co/120x120/081019/FFFFFF?text=COMEDY+MAX", streamUrl: "", programTitle: "No signal", programSub: "Sin programación" },
+            { id: 116, number: "310", name: "ACTION MAX", logo: "https://placehold.co/120x120/081019/FFFFFF?text=ACTION+MAX", streamUrl: "", programTitle: "No signal", programSub: "Sin programación" },
+            { id: 117, number: "312", name: "XTREME SPORTS", logo: "https://placehold.co/120x120/081019/FFFFFF?text=XTREME+SPORTS", streamUrl: "", programTitle: "No signal", programSub: "Sin programación" },
+            { id: 118, number: "314", name: "SPEED TV", logo: "https://placehold.co/120x120/081019/FFFFFF?text=SPEED+TV", streamUrl: "", programTitle: "No signal", programSub: "Sin programación" },
+            { id: 119, number: "316", name: "OUTDOOR CHANNEL", logo: "https://placehold.co/120x120/081019/FFFFFF?text=OUTDOOR+CH", streamUrl: "", programTitle: "No signal", programSub: "Sin programación" },
+            { id: 120, number: "318", name: "FISHING TV", logo: "https://placehold.co/120x120/081019/FFFFFF?text=FISHING+TV", streamUrl: "", programTitle: "No signal", programSub: "Sin programación" },
+            { id: 121, number: "320", name: "GAMER TV", logo: "https://placehold.co/120x120/081019/FFFFFF?text=GAMER+TV", streamUrl: "", programTitle: "No signal", programSub: "Sin programación" },
+            { id: 122, number: "322", name: "ESPORTS HD", logo: "https://placehold.co/120x120/081019/FFFFFF?text=ESPORTS+HD", streamUrl: "", programTitle: "No signal", programSub: "Sin programación" },
+            { id: 123, number: "324", name: "K-POP TV", logo: "https://placehold.co/120x120/081019/FFFFFF?text=K-POP+TV", streamUrl: "", programTitle: "No signal", programSub: "Sin programación" },
+            { id: 124, number: "326", name: "DANCE TV", logo: "https://placehold.co/120x120/081019/FFFFFF?text=DANCE+TV", streamUrl: "", programTitle: "No signal", programSub: "Sin programación" },
+            { id: 125, number: "328", name: "REGGAETON HITS", logo: "https://placehold.co/120x120/081019/FFFFFF?text=REGGAETON+HITS", streamUrl: "", programTitle: "No signal", programSub: "Sin programación" },
+            { id: 126, number: "330", name: "RETRO TOONS", logo: "https://placehold.co/120x120/081019/FFFFFF?text=RETRO+TOONS", streamUrl: "", programTitle: "No signal", programSub: "Sin programación" },
+            { id: 127, number: "332", name: "DOCUMENTALES 24/7", logo: "https://placehold.co/120x120/081019/FFFFFF?text=DOCS+24/7", streamUrl: "", programTitle: "No signal", programSub: "Sin programación" },
+            { id: 128, number: "334", name: "CIENCIA HOY", logo: "https://placehold.co/120x120/081019/FFFFFF?text=CIENCIA+HOY", streamUrl: "", programTitle: "No signal", programSub: "Sin programación" },
+            { id: 129, number: "336", name: "HISTORIA VIVA", logo: "https://placehold.co/120x120/081019/FFFFFF?text=HISTORIA+VIVA", streamUrl: "", programTitle: "No signal", programSub: "Sin programación" },
+            { id: 130, number: "338", name: "BIOGRAPHY", logo: "https://placehold.co/120x120/081019/FFFFFF?text=BIOGRAPHY", streamUrl: "", programTitle: "No signal", programSub: "Sin programación" }
+        ];
+
+        // State variables
+        let currentChannelIndex = 0;
+        let hls = null;
+        let favoriteChannelIds = new Set([1, 2, 5]);
+        let inactivityTimeout = null;
+        let isFullscreenMode = false;
+
+        // DOM Element references
+        const videoPlayer = document.getElementById('video-player');
+        const playerWrapper = document.getElementById('player-wrapper');
+        const playerLoader = document.getElementById('player-loader');
+        const channelsList = document.getElementById('channels-list');
+        const emptyState = document.getElementById('empty-state');
+        
+        const centerPlayBtn = document.getElementById('center-play-btn');
+        const centerPlayIcon = document.getElementById('center-play-icon');
+        const fsPlayPauseBtn = document.getElementById('fs-play-pause-btn');
+        const fsPlayIcon = document.getElementById('fs-play-icon');
+        
+        const inlineControls = document.getElementById('inline-controls');
+        const fullscreenOverlay = document.getElementById('fullscreen-overlay');
+        
+        const inlineChNum = document.getElementById('inline-ch-num');
+        const inlineChName = document.getElementById('inline-ch-name');
+        const fsChNumber = document.getElementById('fs-ch-number');
+        const fsChannelName = document.getElementById('fs-channel-name');
+        const fsProgramTitle = document.getElementById('fs-program-title');
+        
+        const searchBtn = document.getElementById('search-btn');
+        const searchContainer = document.getElementById('search-bar-container');
+        const searchInput = document.getElementById('channel-search-input');
+        const clearSearchBtn = document.getElementById('clear-search-btn');
+        
+        const favBtn = document.getElementById('fav-btn');
+        const favIcon = document.getElementById('fav-icon');
+        const fsFavBtn = document.getElementById('fs-fav-btn');
+        const fsFavIcon = document.getElementById('fs-fav-icon');
+        
+        const progressBar = document.getElementById('progress-bar');
+        const fsProgressBar = document.getElementById('fs-progress-bar');
+        
+        const volumeMuteBtn = document.getElementById('volume-mute-btn');
+        const volumeIcon = document.getElementById('volume-icon');
+        const fsVolBtn = document.getElementById('fs-vol-btn');
+        const fsVolIcon = document.getElementById('fs-vol-icon');
+        const fsVolSlider = document.getElementById('fs-vol-slider');
+
+        const fsDrawer = document.getElementById('fs-channel-drawer');
+        const fsDrawerToggle = document.getElementById('fs-drawer-toggle');
+        const fsCloseDrawer = document.getElementById('fs-close-drawer');
+        const fsDrawerChannels = document.getElementById('fs-drawer-channels');
+        const fsSearchInput = document.getElementById('fs-search-input');
+
+        // Initialize App
+        window.addEventListener('DOMContentLoaded', () => {
+            renderChannels(channelsData);
+            loadChannel(0);
+            setupEventListeners();
+            startInactivityTimer();
+        });
+
+        function scrollToTop() {
+            window.scrollTo({ top: 0, behavior: 'smooth' });
+        }
+
+        // Render Channel List
+        function renderChannels(items) {
+            channelsList.innerHTML = '';
+
+            if (items.length === 0) {
+                emptyState.classList.remove('hidden');
+                return;
+            } else {
+                emptyState.classList.add('hidden');
+            }
+
+            items.forEach((ch) => {
+                const globalIndex = channelsData.findIndex(c => c.id === ch.id);
+                const isActive = globalIndex === currentChannelIndex;
+
+                const channelEl = document.createElement('div');
+                channelEl.className = 'flex items-center gap-3 cursor-pointer group';
+                channelEl.onclick = () => loadChannel(globalIndex);
+
+                channelEl.innerHTML = `
+                    <div class="w-8 text-right font-semibold text-xs text-white/80 shrink-0">
+                        ${ch.number}
+                    </div>
+                    <div class="w-24 h-20 rounded-2xl channel-logo-box flex items-center justify-center overflow-hidden p-1.5 shrink-0 transition group-hover:scale-105 ${isActive ? 'ring-2 ring-accent' : ''}">
+                        <img src="${ch.logo}" alt="${ch.name}" class="w-full h-full object-contain rounded-xl" onerror="this.src='https://placehold.co/120x120/052027/FFFFFF?text=${encodeURIComponent(ch.name)}'">
+                    </div>
+                    <div class="flex-1 bg-cardBg rounded-2xl p-3 h-20 flex flex-col justify-center border border-transparent group-hover:border-accent/30 transition">
+                        <div class="text-accent font-bold text-sm tracking-wide line-clamp-1">${ch.programTitle}</div>
+                        <div class="text-white text-xs mt-1 font-medium opacity-90 line-clamp-1">${ch.programSub}</div>
+                    </div>
+                `;
+                channelsList.appendChild(channelEl);
+            });
+
+            renderFullscreenDrawerChannels();
+        }
+
+        // Render Fullscreen Drawer Channels
+        function renderFullscreenDrawerChannels() {
+            fsDrawerChannels.innerHTML = '';
+            const fsSearch = fsSearchInput.value.trim().toLowerCase();
+
+            const drawerItems = channelsData.filter(ch => {
+                if (fsSearch === '') return true;
+                return ch.name.toLowerCase().includes(fsSearch) || ch.number.includes(fsSearch);
+            });
+
+            drawerItems.forEach((ch) => {
+                const globalIndex = channelsData.findIndex(c => c.id === ch.id);
+                const isActive = globalIndex === currentChannelIndex;
+
+                const item = document.createElement('div');
+                item.className = `flex items-center gap-2.5 p-2 rounded-xl cursor-pointer transition ${isActive ? 'bg-accent text-black font-bold' : 'bg-cardBg/70 text-white hover:bg-cardHover border border-gray-800/60'}`;
+                item.onclick = () => {
+                    loadChannel(globalIndex);
+                    toggleFsDrawer(false);
+                };
+
+                item.innerHTML = `
+                    <span class="text-[10px] ${isActive ? 'bg-black text-accent' : 'bg-black/60 text-accent'} font-mono px-1.5 py-0.5 rounded shrink-0">${ch.number}</span>
+                    <span class="text-xs truncate flex-1">${ch.name}</span>
+                    ${isActive ? '<i class="fa-solid fa-play text-black text-xs mr-1"></i>' : ''}
+                `;
+                fsDrawerChannels.appendChild(item);
+            });
+        }
+
+        // Load Streaming Channel URL
+        function loadChannel(index) {
+            if (index < 0 || index >= channelsData.length) return;
+
+            currentChannelIndex = index;
+            const channel = channelsData[index];
+
+            inlineChNum.textContent = `CH ${channel.number}`;
+            inlineChName.textContent = channel.name;
+            fsChNumber.textContent = `CH ${channel.number}`;
+            fsChannelName.textContent = channel.name;
+            fsProgramTitle.textContent = channel.programTitle;
+
+            updateFavoriteUI(favoriteChannelIds.has(channel.id));
+
+            renderChannels(channelsData);
+
+            const streamUrl = channel.streamUrl || "https://test-streams.mux.dev/x36xhzz/x36xhzz.m3u8";
+
+            showLoader(true);
+
+            if (Hls.isSupported() && streamUrl.endsWith('.m3u8')) {
+                if (hls) {
+                    hls.destroy();
+                }
+                hls = new Hls({ enableWorker: true });
+                hls.loadSource(streamUrl);
+                hls.attachMedia(videoPlayer);
+                hls.on(Hls.Events.MANIFEST_PARSED, () => {
+                    videoPlayer.play().then(() => showLoader(false)).catch(() => showLoader(false));
+                    updatePlayIcons(true);
+                });
+                hls.on(Hls.Events.ERROR, () => showLoader(false));
+            } else if (videoPlayer.canPlayType('application/vnd.apple.mpegurl')) {
+                videoPlayer.src = streamUrl;
+                videoPlayer.play().then(() => showLoader(false)).catch(() => showLoader(false));
+                updatePlayIcons(true);
+            } else {
+                videoPlayer.src = streamUrl;
+                videoPlayer.play().then(() => showLoader(false)).catch(() => showLoader(false));
+            }
+
+            showToast(`Cargando canal ${channel.name}`);
+        }
+
+        function showLoader(visible) {
+            if (visible) {
+                playerLoader.classList.remove('opacity-0', 'pointer-events-none');
+            } else {
+                playerLoader.classList.add('opacity-0', 'pointer-events-none');
+            }
+        }
+
+        // Toggle Play / Pause
+        function togglePlay() {
+            if (videoPlayer.paused) {
+                videoPlayer.play();
+                updatePlayIcons(true);
+            } else {
+                videoPlayer.pause();
+                updatePlayIcons(false);
+            }
+        }
+
+        function updatePlayIcons(isPlaying) {
+            if (isPlaying) {
+                centerPlayIcon.className = "fa-solid fa-pause text-2xl w-6 h-6 flex items-center justify-center";
+                fsPlayIcon.className = "fa-solid fa-pause text-3xl w-8 h-8 flex items-center justify-center";
+            } else {
+                centerPlayIcon.className = "fa-solid fa-play text-2xl ml-0.5 w-6 h-6 flex items-center justify-center";
+                fsPlayIcon.className = "fa-solid fa-play text-3xl ml-1 w-8 h-8 flex items-center justify-center";
+            }
+        }
+
+        // Cambia la orientación solo mientras el reproductor está en pantalla completa.
+        async function setFullscreenOrientation(isFullscreen) {
+            try {
+                if (screen.orientation && screen.orientation.lock && screen.orientation.unlock) {
+                    if (isFullscreen) {
+                        await screen.orientation.lock('landscape');
+                    } else {
+                        screen.orientation.unlock();
+                    }
+                }
+            } catch (error) {
+                // Algunos navegadores requieren instalar la app o no permiten bloquear orientación.
+            }
+        }
+
+        // Toggle Fullscreen Overlay Mode
+        function toggleFullScreen() {
+            isFullscreenMode = !isFullscreenMode;
+
+            if (isFullscreenMode) {
+                if (playerWrapper.requestFullscreen) {
+                    playerWrapper.requestFullscreen().then(() => {
+                        setFullscreenOrientation(true);
+                    }).catch(() => {});
+                } else if (playerWrapper.webkitRequestFullscreen) {
+                    playerWrapper.webkitRequestFullscreen();
+                    setFullscreenOrientation(true);
+                }
+                fullscreenOverlay.classList.remove('hidden');
+                playerWrapper.classList.add('fullscreen-container');
+                renderFullscreenDrawerChannels();
+            } else {
+                if (document.exitFullscreen && document.fullscreenElement) {
+                    document.exitFullscreen().catch(() => {});
+                }
+                setFullscreenOrientation(false);
+                fullscreenOverlay.classList.add('hidden');
+                playerWrapper.classList.remove('fullscreen-container');
+                toggleFsDrawer(false);
+            }
+            resetInactivityTimer();
+        }
+
+        function toggleFavoriteCurrent() {
+            const curCh = channelsData[currentChannelIndex];
+            if (favoriteChannelIds.has(curCh.id)) {
+                favoriteChannelIds.delete(curCh.id);
+                showToast("Eliminado de Favoritos");
+            } else {
+                favoriteChannelIds.add(curCh.id);
+                showToast("Añadido a Favoritos");
+            }
+            updateFavoriteUI(favoriteChannelIds.has(curCh.id));
+        }
+
+        function updateFavoriteUI(isFav) {
+            if (isFav) {
+                favIcon.className = "fa-solid fa-heart text-accent text-sm";
+                fsFavIcon.className = "fa-solid fa-heart text-2xl text-accent";
+            } else {
+                favIcon.className = "fa-regular fa-heart text-accent text-sm";
+                fsFavIcon.className = "fa-regular fa-heart text-2xl text-accent";
+            }
+        }
+
+        function toggleFsDrawer(forceState) {
+            if (forceState !== undefined) {
+                if (forceState) {
+                    fsDrawer.classList.remove('translate-x-full');
+                } else {
+                    fsDrawer.classList.add('translate-x-full');
+                }
+            } else {
+                fsDrawer.classList.toggle('translate-x-full');
+            }
+        }
+
+        // Controls Auto-Hide Behavior
+        function resetInactivityTimer() {
+            inlineControls.classList.remove('controls-hidden');
+            fullscreenOverlay.classList.remove('controls-hidden');
+
+            clearTimeout(inactivityTimeout);
+            inactivityTimeout = setTimeout(() => {
+                if (!videoPlayer.paused) {
+                    inlineControls.classList.add('controls-hidden');
+                    fullscreenOverlay.classList.add('controls-hidden');
+                }
+            }, 3000);
+        }
+
+        function startInactivityTimer() {
+            ['mousemove', 'touchstart', 'click', 'keydown'].forEach(evt => {
+                document.addEventListener(evt, resetInactivityTimer, { passive: true });
+            });
+        }
+
+        // Setup All UI Event Listeners
+        function setupEventListeners() {
+            centerPlayBtn.addEventListener('click', (e) => { e.stopPropagation(); togglePlay(); });
+            fsPlayPauseBtn.addEventListener('click', (e) => { e.stopPropagation(); togglePlay(); });
+            videoPlayer.addEventListener('click', togglePlay);
+
+            document.getElementById('fullscreen-toggle-btn').addEventListener('click', toggleFullScreen);
+            document.getElementById('fs-exit-btn').addEventListener('click', toggleFullScreen);
+            document.getElementById('exit-fs-x').addEventListener('click', toggleFullScreen);
+
+            document.addEventListener('fullscreenchange', () => {
+                if (document.fullscreenElement) {
+                    setFullscreenOrientation(true);
+                } else {
+                    setFullscreenOrientation(false);
+                    if (isFullscreenMode) {
+                        isFullscreenMode = false;
+                        fullscreenOverlay.classList.add('hidden');
+                        playerWrapper.classList.remove('fullscreen-container');
+                        toggleFsDrawer(false);
+                    }
+                }
+            });
+
+            favBtn.addEventListener('click', (e) => { e.stopPropagation(); toggleFavoriteCurrent(); });
+            fsFavBtn.addEventListener('click', (e) => { e.stopPropagation(); toggleFavoriteCurrent(); });
+
+            videoPlayer.addEventListener('timeupdate', () => {
+                if (videoPlayer.duration) {
+                    const pct = (videoPlayer.currentTime / videoPlayer.duration) * 100;
+                    progressBar.style.width = `${pct}%`;
+                    fsProgressBar.style.width = `${pct}%`;
+
+                    const mins = Math.floor(videoPlayer.currentTime / 60);
+                    const secs = Math.floor(videoPlayer.currentTime % 60);
+                    document.getElementById('fs-current-time').textContent = 
+                        `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
+                }
+            });
+
+            const toggleMute = (e) => {
+                e.stopPropagation();
+                videoPlayer.muted = !videoPlayer.muted;
+                const isMute = videoPlayer.muted;
+                volumeIcon.className = isMute ? "fa-solid fa-volume-xmark text-sm" : "fa-solid fa-volume-high text-sm";
+                fsVolIcon.className = isMute ? "fa-solid fa-volume-xmark text-xl text-red-400" : "fa-solid fa-volume-high text-xl";
+                fsVolSlider.value = isMute ? 0 : videoPlayer.volume;
+            };
+
+            volumeMuteBtn.addEventListener('click', toggleMute);
+            fsVolBtn.addEventListener('click', toggleMute);
+
+            fsVolSlider.addEventListener('input', (e) => {
+                const val = parseFloat(e.target.value);
+                videoPlayer.volume = val;
+                videoPlayer.muted = (val === 0);
+                fsVolIcon.className = (val === 0) ? "fa-solid fa-volume-xmark text-xl text-red-400" : "fa-solid fa-volume-high text-xl";
+            });
+
+            searchBtn.addEventListener('click', () => {
+                searchContainer.classList.toggle('hidden');
+                if (!searchContainer.classList.contains('hidden')) {
+                    searchInput.focus();
+                }
+            });
+
+            searchInput.addEventListener('input', (e) => {
+                const term = e.target.value.toLowerCase().trim();
+                clearSearchBtn.classList.toggle('hidden', term.length === 0);
+                const filtered = channelsData.filter(ch => 
+                    ch.name.toLowerCase().includes(term) || ch.number.includes(term)
+                );
+                renderChannels(filtered);
+            });
+
+            clearSearchBtn.addEventListener('click', () => {
+                searchInput.value = '';
+                clearSearchBtn.classList.add('hidden');
+                renderChannels(channelsData);
+            });
+
+            fsSearchInput.addEventListener('input', () => {
+                renderFullscreenDrawerChannels();
+            });
+
+            fsDrawerToggle.addEventListener('click', (e) => {
+                e.stopPropagation();
+                toggleFsDrawer();
+            });
+
+            fsCloseDrawer.addEventListener('click', () => {
+                toggleFsDrawer(false);
+            });
+
+            document.getElementById('tab-canales').addEventListener('click', function() {
+                renderChannels(channelsData);
+                showToast("Mostrando Lista de Canales");
+            });
+            document.getElementById('tab-programacion').addEventListener('click', function() {
+                showToast("Guía de Programación");
+            });
+        }
+
+        function toggleCast() {
+            showToast("Buscando dispositivos Chromecast...");
+        }
+
+        function showToast(msg) {
+            const toast = document.getElementById('toast');
+            toast.textContent = msg;
+            toast.classList.remove('opacity-0');
+            setTimeout(() => {
+                toast.classList.add('opacity-0');
+            }, 2500);
+        }
+    </script>
+</body>
+</html>
